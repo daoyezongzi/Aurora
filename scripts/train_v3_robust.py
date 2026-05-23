@@ -66,8 +66,13 @@ class TuneOpts:
     thr_min: float
     thr_max: float
     thr_step: float
+    thr_eps: float
+    thr_anchor: float
+    cfg_eps: float
     calib: str
     calib_cv: int
+    cfg_std_pen: float
+    cfg_thr_pen: float
 
 
 def parse_args() -> argparse.Namespace:
@@ -85,12 +90,42 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--thr-max", type=float, default=0.70, help="Max threshold in search grid")
     parser.add_argument("--thr-step", type=float, default=0.01, help="Step size in threshold search grid")
     parser.add_argument(
+        "--thr-eps",
+        type=float,
+        default=0.01,
+        help="Near-best tolerance in threshold score; pick stable threshold inside this band",
+    )
+    parser.add_argument(
+        "--thr-anchor",
+        type=float,
+        default=0.50,
+        help="Preferred threshold center when scores are close",
+    )
+    parser.add_argument(
+        "--cfg-eps",
+        type=float,
+        default=0.001,
+        help="Near-best tolerance for model config selection across a fold",
+    )
+    parser.add_argument(
         "--calib",
         default="none",
         choices=["none", "sigmoid", "isotonic"],
         help="Probability calibration method",
     )
     parser.add_argument("--calib-cv", type=int, default=3, help="Cross-validation folds for calibration")
+    parser.add_argument(
+        "--cfg-std-pen",
+        type=float,
+        default=0.15,
+        help="Penalty weight for cross-fold score std when picking final config",
+    )
+    parser.add_argument(
+        "--cfg-thr-pen",
+        type=float,
+        default=0.08,
+        help="Penalty weight for cross-fold threshold std when picking final config",
+    )
     return parser.parse_args()
 
 
@@ -108,12 +143,15 @@ def main() -> int:
     ensure_dir(out_root)
     ensure_dir(chart_dir)
 
-    fold_rows = rolling_validate(frame, cfg, opts)
+    fold_rows, cfg_rows = rolling_validate(frame, cfg, opts)
     fold_df = pd.DataFrame(fold_rows)
     fold_df.to_csv(out_root / "rolling_metrics.csv", index=False, encoding="utf-8")
     dump_json(out_root / "rolling_metrics.json", {"rows": fold_rows})
+    cfg_df = pd.DataFrame(cfg_rows)
+    cfg_df.to_csv(out_root / "config_metrics.csv", index=False, encoding="utf-8")
+    dump_json(out_root / "config_metrics.json", {"rows": cfg_rows})
 
-    best_cfg = pick_best_config(fold_rows)
+    best_cfg = pick_best_config(cfg_rows, opts)
     final_row, final_pred = run_final_eval(frame, cfg, best_cfg, opts, out_root / "final")
 
     final_pred.to_csv(out_root / "final" / "predictions.csv", index=False, encoding="utf-8")
@@ -127,6 +165,7 @@ def main() -> int:
 
     print("[Aurora] v3 done")
     print(f"[Aurora] rolling metrics: {out_root / 'rolling_metrics.csv'}")
+    print(f"[Aurora] config metrics: {out_root / 'config_metrics.csv'}")
     print(f"[Aurora] final metrics: {out_root / 'final' / 'metrics.json'}")
     print(f"[Aurora] error summary: {out_root / 'error_summary.json'}")
     print(f"[Aurora] charts: {chart_dir}")
@@ -142,15 +181,30 @@ def build_tune_opts(args: argparse.Namespace) -> TuneOpts:
     thr_min = float(args.thr_min)
     thr_max = float(args.thr_max)
     thr_step = float(args.thr_step)
+    thr_eps = float(args.thr_eps)
+    thr_anchor = float(args.thr_anchor)
+    cfg_eps = float(args.cfg_eps)
     if not (0.0 < thr_min < thr_max < 1.0):
         raise ValueError("threshold range must satisfy 0 < thr_min < thr_max < 1")
     if thr_step <= 0.0:
         raise ValueError("thr_step must be positive")
+    if thr_eps < 0.0:
+        raise ValueError("thr_eps must be >= 0")
+    if not (0.0 < thr_anchor < 1.0):
+        raise ValueError("thr_anchor must be in (0, 1)")
+    if thr_anchor < thr_min or thr_anchor > thr_max:
+        raise ValueError("thr_anchor must stay inside [thr_min, thr_max]")
+    if cfg_eps < 0.0:
+        raise ValueError("cfg_eps must be >= 0")
 
     calib = str(args.calib).strip().lower()
     calib_cv = int(args.calib_cv)
     if calib != "none" and calib_cv < 2:
         raise ValueError("calib_cv must be >=2 when calibration is enabled")
+    cfg_std_pen = float(args.cfg_std_pen)
+    cfg_thr_pen = float(args.cfg_thr_pen)
+    if cfg_std_pen < 0.0 or cfg_thr_pen < 0.0:
+        raise ValueError("config penalties must be >= 0")
 
     return TuneOpts(
         thr_goal=thr_goal,
@@ -158,8 +212,13 @@ def build_tune_opts(args: argparse.Namespace) -> TuneOpts:
         thr_min=thr_min,
         thr_max=thr_max,
         thr_step=thr_step,
+        thr_eps=thr_eps,
+        thr_anchor=thr_anchor,
+        cfg_eps=cfg_eps,
         calib=calib,
         calib_cv=calib_cv,
+        cfg_std_pen=cfg_std_pen,
+        cfg_thr_pen=cfg_thr_pen,
     )
 
 
@@ -184,19 +243,20 @@ def cut_warmup(frame: pd.DataFrame, seq_len: int) -> pd.DataFrame:
     return frame.iloc[seq_len - 1 :].reset_index(drop=True).copy()
 
 
-def rolling_validate(frame: pd.DataFrame, cfg: AuroraConfig, opts: TuneOpts) -> list[dict[str, Any]]:
+def rolling_validate(frame: pd.DataFrame, cfg: AuroraConfig, opts: TuneOpts) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     cuts = build_folds(len(frame), cfg)
     if len(cuts) < 2:
         raise ValueError("rolling validation needs at least 2 folds; try more data or smaller window.")
 
     rows: list[dict[str, Any]] = []
+    cfg_rows: list[dict[str, Any]] = []
     for cut in cuts:
         train_df = frame.iloc[cut.train_start : cut.train_end].copy()
         val_df = frame.iloc[cut.train_end : cut.val_end].copy()
         test_df = frame.iloc[cut.val_end : cut.test_end].copy()
 
         split = to_split_data(train_df, val_df, test_df, cfg.data.feature_cols, cfg.data.label_col)
-        model_cfg, val_best = tune_mlp(
+        model_cfg, val_best, fold_cfg_rows = tune_mlp(
             split.x_train,
             split.y_train,
             split.x_val,
@@ -204,6 +264,19 @@ def rolling_validate(frame: pd.DataFrame, cfg: AuroraConfig, opts: TuneOpts) -> 
             cfg.project.seed,
             opts,
         )
+        for item in fold_cfg_rows:
+            cfg_rows.append(
+                {
+                    "fold_id": cut.fold_id,
+                    "hidden": item["hidden"],
+                    "alpha": item["alpha"],
+                    "best_threshold": item["best_threshold"],
+                    "val_score_best": item["val_score_best"],
+                    "val_f1_best": item["val_f1_best"],
+                    "threshold_goal": opts.thr_goal,
+                    "calibration": opts.calib,
+                }
+            )
 
         fit_x = np.concatenate([split.x_train, split.x_val], axis=0)
         fit_y = np.concatenate([split.y_train, split.y_val], axis=0)
@@ -226,6 +299,9 @@ def rolling_validate(frame: pd.DataFrame, cfg: AuroraConfig, opts: TuneOpts) -> 
             "threshold_goal": val_best["goal"],
             "calibration": opts.calib,
             "best_threshold": val_best["threshold"],
+            "threshold_anchor": float(opts.thr_anchor),
+            "threshold_eps": float(opts.thr_eps),
+            "config_eps": float(opts.cfg_eps),
             "val_score_best": val_best["score"],
             "val_f1_best": val_best["f1"],
             "test_accuracy": test_row["accuracy"],
@@ -235,7 +311,7 @@ def rolling_validate(frame: pd.DataFrame, cfg: AuroraConfig, opts: TuneOpts) -> 
             "test_roc_auc": test_row["roc_auc"],
         }
         rows.append(row)
-    return rows
+    return rows, cfg_rows
 
 
 def build_folds(n_rows: int, cfg: AuroraConfig) -> list[FoldCut]:
@@ -317,38 +393,85 @@ def tune_mlp(
     y_val: np.ndarray,
     seed: int,
     opts: TuneOpts,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
     grid = [
         {"hidden": [64, 32], "alpha": 1e-3},
         {"hidden": [64, 32], "alpha": 1e-4},
         {"hidden": [64], "alpha": 1e-3},
         {"hidden": [32], "alpha": 1e-4},
     ]
-    best_cfg: dict[str, Any] | None = None
-    best_val: dict[str, float | str] = {"score": -1.0, "f1": -1.0, "threshold": 0.5, "goal": opts.thr_goal}
-
+    cand_rows: list[dict[str, Any]] = []
     for cfg_item in grid:
         model = fit_prob_model(cfg_item["hidden"], cfg_item["alpha"], x_train, y_train, seed, opts)
         val_prob = model.predict_proba(x_val)[:, 1]
-        score = tune_threshold(y_val, val_prob, opts)
-        if float(score["score"]) > float(best_val["score"]):
-            best_cfg = cfg_item
-            best_val = score
+        tuned = tune_threshold(y_val, val_prob, opts)
+        cand_rows.append(
+            {
+                "hidden": cfg_item["hidden"],
+                "alpha": cfg_item["alpha"],
+                "best_threshold": float(tuned["threshold"]),
+                "val_score_best": float(tuned["score"]),
+                "val_f1_best": float(tuned["f1"]),
+                "threshold_goal": str(tuned["goal"]),
+            }
+        )
 
-    if best_cfg is None:
+    best_row = pick_stable_row(
+        cand_rows,
+        opts,
+        score_key="val_score_best",
+        thr_key="best_threshold",
+        f1_key="val_f1_best",
+        eps=opts.cfg_eps,
+    )
+    if best_row is None:
         raise RuntimeError("tune_mlp failed to find candidate")
-    return best_cfg, {"score": float(best_val["score"]), "f1": float(best_val["f1"]), "threshold": float(best_val["threshold"]), "goal": str(best_val["goal"])}
+    best_cfg = {"hidden": best_row["hidden"], "alpha": best_row["alpha"]}
+    best_val = {
+        "score": float(best_row["val_score_best"]),
+        "f1": float(best_row["val_f1_best"]),
+        "threshold": float(best_row["best_threshold"]),
+        "goal": str(best_row["threshold_goal"]),
+    }
+    return best_cfg, best_val, cand_rows
 
 
 def tune_threshold(y_true: np.ndarray, prob: np.ndarray, opts: TuneOpts) -> dict[str, float | str]:
-    best: dict[str, float | str] = {"score": -1.0, "f1": -1.0, "threshold": 0.5, "goal": opts.thr_goal}
+    rows: list[dict[str, float | str]] = []
     for thr in np.arange(opts.thr_min, opts.thr_max + 1e-9, opts.thr_step):
         pred = (prob >= thr).astype(np.int64)
         f1 = float(f1_score(y_true, pred, zero_division=0))
         score = threshold_metric(y_true, pred, opts)
-        if score > float(best["score"]):
-            best = {"score": float(score), "f1": f1, "threshold": float(round(thr, 2)), "goal": opts.thr_goal}
-    return best
+        rows.append({"score": float(score), "f1": f1, "threshold": float(round(thr, 2)), "goal": opts.thr_goal})
+    best = pick_stable_row(rows, opts, score_key="score", thr_key="threshold", f1_key="f1")
+    if best is None:
+        raise RuntimeError("tune_threshold found no candidate")
+    return {"score": float(best["score"]), "f1": float(best["f1"]), "threshold": float(best["threshold"]), "goal": str(best["goal"])}
+
+
+def pick_stable_row(
+    rows: list[dict[str, Any]],
+    opts: TuneOpts,
+    score_key: str,
+    thr_key: str,
+    f1_key: str,
+    eps: float | None = None,
+) -> dict[str, Any] | None:
+    if not rows:
+        return None
+    top_score = max(float(row[score_key]) for row in rows)
+    gap = float(opts.thr_eps) if eps is None else float(eps)
+    kept = [row for row in rows if float(row[score_key]) >= (top_score - gap)]
+    if not kept:
+        kept = rows
+    kept.sort(
+        key=lambda row: (
+            abs(float(row[thr_key]) - float(opts.thr_anchor)),
+            -float(row[score_key]),
+            -float(row[f1_key]),
+        )
+    )
+    return kept[0]
 
 
 def threshold_metric(y_true: np.ndarray, pred: np.ndarray, opts: TuneOpts) -> float:
@@ -389,22 +512,27 @@ def fit_prob_model(
     return model
 
 
-def pick_best_config(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    bucket: dict[str, dict[str, Any]] = defaultdict(lambda: {"count": 0, "sum_val": 0.0})
+def pick_best_config(rows: list[dict[str, Any]], opts: TuneOpts) -> dict[str, Any]:
+    bucket: dict[str, dict[str, Any]] = defaultdict(lambda: {"count": 0, "vals": [], "thrs": []})
     key_map: dict[str, dict[str, Any]] = {}
 
     for row in rows:
         key = f"{row['hidden']}-{row['alpha']}"
         key_map[key] = {"hidden": row["hidden"], "alpha": row["alpha"]}
         bucket[key]["count"] += 1
-        score = row.get("val_score_best", row.get("val_f1_best", 0.0))
-        bucket[key]["sum_val"] += float(score)
+        score = float(row.get("val_score_best", row.get("val_f1_best", 0.0)))
+        bucket[key]["vals"].append(score)
+        bucket[key]["thrs"].append(float(row.get("best_threshold", opts.thr_anchor)))
 
     best_key = ""
     best_score = -1.0
     for key, agg in bucket.items():
-        mean_val = agg["sum_val"] / max(agg["count"], 1)
-        score = mean_val
+        vals = np.asarray(agg["vals"], dtype=float)
+        thrs = np.asarray(agg["thrs"], dtype=float)
+        mean_val = float(vals.mean()) if vals.size else 0.0
+        std_val = float(vals.std(ddof=0)) if vals.size else 0.0
+        std_thr = float(thrs.std(ddof=0)) if thrs.size else 0.0
+        score = mean_val - float(opts.cfg_std_pen) * std_val - float(opts.cfg_thr_pen) * std_thr
         if score > best_score:
             best_score = score
             best_key = key
@@ -446,8 +574,13 @@ def run_final_eval(
     metric_row["threshold_goal"] = opts.thr_goal
     metric_row["threshold_beta"] = float(opts.beta)
     metric_row["threshold_search"] = [float(opts.thr_min), float(opts.thr_max), float(opts.thr_step)]
+    metric_row["threshold_eps"] = float(opts.thr_eps)
+    metric_row["threshold_anchor"] = float(opts.thr_anchor)
+    metric_row["config_eps"] = float(opts.cfg_eps)
     metric_row["calibration"] = opts.calib
     metric_row["calibration_cv"] = int(opts.calib_cv)
+    metric_row["config_std_pen"] = float(opts.cfg_std_pen)
+    metric_row["config_thr_pen"] = float(opts.cfg_thr_pen)
     metric_row["val_score_best"] = float(val_best["score"])
     metric_row["val_f1_at_best"] = float(val_best["f1"])
     metric_row["brier_score"] = float(brier_score_loss(split.y_test, test_prob))
