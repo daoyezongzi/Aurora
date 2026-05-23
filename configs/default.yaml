@@ -1,0 +1,51 @@
+project:
+  name: Aurora
+  version: v0.1
+  seed: 42
+  device_policy: auto
+
+data:
+  code: "002372.SZ"
+  start_date: "2021-01-01"
+  end_date: "latest"
+  raw_path: "data/raw/002372.SZ_daily.csv"
+  processed_path: "data/processed/002372.SZ_features.csv"
+  expected_sha256: ""
+  refresh_by_default: false
+  label_col: "target_up"
+  label_rule: "close_t+1 > close_t"
+  feature_cols:
+    - open
+    - high
+    - low
+    - close
+    - vol
+    - pct_chg
+    - ma5
+    - ma10
+
+split:
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+  sequence_length: 20
+
+model:
+  hidden_size: 64
+  num_layers: 1
+  dropout: 0.0
+
+train:
+  batch_size: 32
+  learning_rate: 0.001
+  epochs: 30
+  early_stopping_patience: 5
+  threshold: 0.5
+  optimizer: "Adam"
+  loss: "BCEWithLogitsLoss"
+
+output:
+  model_path: "outputs/model.pt"
+  metrics_path: "outputs/metrics.json"
+  predictions_path: "outputs/predictions.csv"
+  scaler_path: "outputs/scaler.npz"

@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Data and outputs
+outputs/*
+!outputs/.gitkeep
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Local docs snapshots
+docs/grill_notes_v0.1.txt
+docs/build_process_v0.1.txt
+docs/run_method_v0.1.txt
+
+# Local env
+.env
+.env*
+!.env.example
+
+# Assignment source files (local reference only)
+大作业说明.pdf
+大作业说明.txt
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
