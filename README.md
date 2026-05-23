@@ -54,10 +54,24 @@ run_aurora.bat prepare
 run_aurora.bat prepare-refresh
 run_aurora.bat train
 run_aurora.bat predict
+run_aurora.bat metrics
 run_aurora.bat test
 ```
 
 如果 `.venv\Scripts\python.exe` 存在，脚本会优先使用虚拟环境 Python；否则自动回退系统 `python`。
+
+`full` / `full-refresh` / `train` 模式结束后，会自动打印指标摘要：
+- accuracy
+- f1
+- threshold
+- confusion_matrix
+- 测试集预测分布
+
+你也可以单独查看指标：
+
+```powershell
+run_aurora.bat metrics
+```
 
 ## Validate
 

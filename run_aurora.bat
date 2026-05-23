@@ -22,6 +22,7 @@ if /I "%MODE%"=="prepare" goto prepare
 if /I "%MODE%"=="prepare-refresh" goto prepare_refresh
 if /I "%MODE%"=="train" goto train
 if /I "%MODE%"=="predict" goto predict
+if /I "%MODE%"=="metrics" goto metrics
 if /I "%MODE%"=="test" goto test
 goto usage
 
@@ -38,10 +39,17 @@ goto done
 :train
 "%PYTHON%" scripts\train_lstm.py --config "%CONFIG%"
 if errorlevel 1 goto fail
+"%PYTHON%" scripts\show_metrics.py --config "%CONFIG%"
+if errorlevel 1 goto fail
 goto done
 
 :predict
 "%PYTHON%" scripts\predict.py --config "%CONFIG%"
+if errorlevel 1 goto fail
+goto done
+
+:metrics
+"%PYTHON%" scripts\show_metrics.py --config "%CONFIG%"
 if errorlevel 1 goto fail
 goto done
 
@@ -57,6 +65,8 @@ if errorlevel 1 goto fail
 if errorlevel 1 goto fail
 "%PYTHON%" scripts\predict.py --config "%CONFIG%"
 if errorlevel 1 goto fail
+"%PYTHON%" scripts\show_metrics.py --config "%CONFIG%"
+if errorlevel 1 goto fail
 goto done
 
 :full_refresh
@@ -65,6 +75,8 @@ if errorlevel 1 goto fail
 "%PYTHON%" scripts\train_lstm.py --config "%CONFIG%"
 if errorlevel 1 goto fail
 "%PYTHON%" scripts\predict.py --config "%CONFIG%"
+if errorlevel 1 goto fail
+"%PYTHON%" scripts\show_metrics.py --config "%CONFIG%"
 if errorlevel 1 goto fail
 goto done
 
@@ -79,6 +91,7 @@ echo   prepare         prepare data
 echo   prepare-refresh prepare data with --refresh
 echo   train           train and evaluate
 echo   predict         run latest-window inference
+echo   metrics         print metrics/predictions summary
 echo   test            run pytest
 exit /b 1
 
