@@ -1,6 +1,6 @@
 project:
   name: Aurora
-  version: v0.1
+  version: v0.3
   seed: 42
   device_policy: auto
 
@@ -23,6 +23,7 @@ data:
     - pct_chg
     - ma5
     - ma10
+    - ret_5
 
 split:
   train_ratio: 0.70

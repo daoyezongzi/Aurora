@@ -98,8 +98,36 @@ def build_training_frame(raw_df: pd.DataFrame, config: AuroraConfig) -> pd.DataF
     for col in numeric_cols:
         frame[col] = pd.to_numeric(frame[col], errors="coerce")
 
+    eps = 1e-9
+    close_prev = frame["close"].shift(1)
+    day_ret = frame["close"].pct_change()
+
+    # Base moving averages.
     frame["ma5"] = frame["close"].rolling(window=5, min_periods=5).mean()
     frame["ma10"] = frame["close"].rolling(window=10, min_periods=10).mean()
+    frame["ma20"] = frame["close"].rolling(window=20, min_periods=20).mean()
+
+    # Return and volatility features.
+    frame["ret_1"] = frame["close"].pct_change(periods=1)
+    frame["ret_3"] = frame["close"].pct_change(periods=3)
+    frame["ret_5"] = frame["close"].pct_change(periods=5)
+    frame["volatility_5"] = day_ret.rolling(window=5, min_periods=5).std()
+    frame["volatility_10"] = day_ret.rolling(window=10, min_periods=10).std()
+    frame["volatility_20"] = day_ret.rolling(window=20, min_periods=20).std()
+
+    # Price structure features.
+    frame["intraday_range"] = (frame["high"] - frame["low"]) / (frame["close"].abs() + eps)
+    frame["overnight_gap"] = (frame["open"] - close_prev) / (close_prev.abs() + eps)
+    frame["close_ma5_gap"] = (frame["close"] - frame["ma5"]) / (frame["ma5"].abs() + eps)
+    frame["close_ma10_gap"] = (frame["close"] - frame["ma10"]) / (frame["ma10"].abs() + eps)
+    frame["close_ma20_gap"] = (frame["close"] - frame["ma20"]) / (frame["ma20"].abs() + eps)
+    frame["close_pos_in_day"] = (frame["close"] - frame["low"]) / ((frame["high"] - frame["low"]).abs() + eps)
+
+    # Volume features.
+    frame["vol_ma5"] = frame["vol"].rolling(window=5, min_periods=5).mean()
+    frame["vol_ma20"] = frame["vol"].rolling(window=20, min_periods=20).mean()
+    frame["vol_ratio_5_20"] = frame["vol_ma5"] / (frame["vol_ma20"].abs() + eps)
+
     frame[config.data.label_col] = (frame["close"].shift(-1) > frame["close"]).astype(int)
 
     keep_cols = ["trade_date"] + config.data.feature_cols + [config.data.label_col]

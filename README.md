@@ -1,12 +1,10 @@
 # Aurora
 
-Aurora v0.1 是一个可复现的最小可行项目，用于完成 `002372.SZ` 的 T+1 涨跌二分类任务。
+Aurora 当前交付主线是 **v0.3 稳健性增强**，目标是：
 
-- 数据：Tushare 日线（支持本地冻结快照）
-- 模型：PyTorch LSTM
-- 标签：`y_t = 1{close_{t+1} > close_t}`
-- 切分：时间顺序 `70% / 15% / 15%`
-- 输出：`outputs/model.pt`、`outputs/metrics.json`、`outputs/predictions.csv`
+1. Rolling validation（滚动验证）
+2. Threshold tuning（阈值调优）
+3. Error analysis（误差分析）
 
 ## Quick Start
 
@@ -18,105 +16,65 @@ python -m venv .venv
 pip install -r requirements-dev.txt
 ```
 
-2. 配置 `.env`（至少包含 `TUSHARE_TOKEN`）：
+2. 配置 `.env`（首次拉数或刷新数据时需要）：
 
 ```env
 TUSHARE_TOKEN=your_token_here
 ```
 
-3. 逐步运行：
-
-```powershell
-python scripts/prepare_data.py --config configs/default.yaml
-python scripts/train_lstm.py --config configs/default.yaml
-python scripts/predict.py --config configs/default.yaml
-```
-
 ## One-Click (Windows BAT)
 
-仓库根目录提供一键脚本：[run_aurora.bat](D:\Github_Storage\Py_finalwork\run_aurora.bat)
+仓库根目录脚本：[run_aurora.bat](D:\Github_Storage\Py_finalwork\run_aurora.bat)
+
+默认直接运行 v0.3：
 
 ```powershell
 run_aurora.bat
 ```
 
-默认模式是 `full`，会按顺序执行：
-1. `prepare_data`
-2. `train_lstm`
-3. `predict`
-
 可选模式：
 
 ```powershell
-run_aurora.bat full
-run_aurora.bat full-refresh
 run_aurora.bat prepare
 run_aurora.bat prepare-refresh
-run_aurora.bat train
-run_aurora.bat predict
-run_aurora.bat metrics
-run_aurora.bat v2
-run_aurora.bat v2-refresh
+run_aurora.bat v3
+run_aurora.bat v3-refresh
 run_aurora.bat test
 ```
 
-如果 `.venv\Scripts\python.exe` 存在，脚本会优先使用虚拟环境 Python；否则自动回退系统 `python`。
+模式说明：
 
-`full` / `full-refresh` / `train` 模式结束后，会自动打印指标摘要：
-- accuracy
-- f1
-- threshold
-- confusion_matrix
-- 测试集预测分布
+1. `prepare`：准备数据（优先本地冻结数据）
+2. `prepare-refresh`：强制从 Tushare 拉新数据
+3. `v3`：执行 v0.3 全流程（rolling + threshold + error analysis）
+4. `v3-refresh`：先刷新数据，再执行 v0.3
+5. `test`：运行最小测试集
 
-你也可以单独查看指标：
+## v0.3 输出文件
 
-```powershell
-run_aurora.bat metrics
-```
+1. 滚动验证：
+- `outputs/v3/rolling_metrics.csv`
+- `outputs/v3/rolling_metrics.json`
 
-## v0.2 多模型对比（LSTM + LogReg + MLP）
+2. 最终评估：
+- `outputs/v3/final/metrics.json`
+- `outputs/v3/final/predictions.csv`
 
-`v2` 模式会一次性训练并评估 3 个模型：
-- `lstm`
-- `logreg`（LogisticRegression）
-- `mlp`（多层感知机）
+3. 误差分析：
+- `outputs/v3/error_cases.csv`
+- `outputs/v3/error_summary.json`
 
-运行命令：
+4. 图表（SVG）：
+- `outputs/v3/charts/rolling_f1.svg`
+- `outputs/v3/charts/rolling_threshold.svg`
+- `outputs/v3/charts/error_distribution.svg`
 
-```powershell
-run_aurora.bat v2
-```
+## 如何读结果
 
-如需先刷新 Tushare 原始数据：
-
-```powershell
-run_aurora.bat v2-refresh
-```
-
-### v2 输出文件
-
-- 总表：`outputs/v2/compare_metrics.csv`
-- 总表（JSON）：`outputs/v2/compare_metrics.json`
-- 单模型指标：
-  - `outputs/v2/lstm/metrics_v2.json`
-  - `outputs/v2/logreg/metrics.json`
-  - `outputs/v2/mlp/metrics.json`
-- 单模型预测：
-  - `outputs/v2/lstm/predictions.csv`
-  - `outputs/v2/logreg/predictions.csv`
-  - `outputs/v2/mlp/predictions.csv`
-- 对比图表（SVG）：
-  - `outputs/v2/charts/metric_bars.svg`
-  - `outputs/v2/charts/roc_curves.svg`
-  - `outputs/v2/charts/confusion_matrices.svg`
-
-### 如何看 v2 结果
-
-1. 先看 `compare_metrics.csv`：快速比较三模型 `accuracy/f1/precision/recall/roc_auc`。
-2. 再看 `confusion_matrices.svg`：判断是“漏报多”还是“误报多”。
-3. 再看 `roc_curves.svg`：比较排序能力（曲线越靠左上通常越好）。
-4. 最后看各模型 `predictions.csv`：定位具体日期的预测偏差。
+1. `rolling_metrics.csv`：看每个 fold 的 `test_f1/test_roc_auc/best_threshold` 稳定性。
+2. `final/metrics.json`：看最终主指标（accuracy/f1/precision/recall/roc_auc）。
+3. `error_summary.json`：看误报与漏报结构，特别是近阈值错误占比。
+4. `error_cases.csv`：逐条定位错判日期与概率。
 
 ## Validate
 
@@ -124,11 +82,20 @@ run_aurora.bat v2-refresh
 python -m pytest -q
 ```
 
+## Docs
+
+详细过程与解释文档在 `docs/` 目录：
+
+1. `docs/version_iterations.txt`
+2. `docs/run_method_v0.1.txt`
+3. `docs/grill_notes_v0.1.txt`
+4. `docs/build_process_v0.1.txt`
+
 ## Repo Layout
 
-- `src/aurora_ml/`：核心实现（配置、数据、模型、训练、推理）
-- `scripts/`：命令行入口
-- `configs/default.yaml`：统一配置
-- `data/`：原始/处理后数据
-- `outputs/`：训练输出（默认不提交）
-- `tests/`：最小测试集
+1. `src/aurora_ml/`：核心实现（配置、数据、模型、训练、推理）
+2. `scripts/`：命令行入口（当前主入口是 `train_v3_robust.py`）
+3. `configs/default.yaml`：统一配置
+4. `data/`：原始/处理后数据
+5. `outputs/`：训练输出（默认不提交）
+6. `tests/`：最小测试集

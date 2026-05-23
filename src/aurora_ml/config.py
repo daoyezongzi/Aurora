@@ -100,7 +100,7 @@ def load_config(path: str | Path) -> AuroraConfig:
 def _to_project(raw: dict[str, Any]) -> ProjectConfig:
     return ProjectConfig(
         name=str(raw.get("name", "Aurora")),
-        version=str(raw.get("version", "v0.1")),
+        version=str(raw.get("version", "v0.3")),
         seed=int(raw.get("seed", 42)),
         device_policy=str(raw.get("device_policy", "auto")),
     )

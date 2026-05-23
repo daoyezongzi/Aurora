@@ -1,4 +1,4 @@
-"""Aurora v0.1 package."""
+"""Aurora v0.3 package."""
 
 __all__ = [
     "config",
