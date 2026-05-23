@@ -1,9 +1,6 @@
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-*.so
 
 # Virtual environments
 .venv/
@@ -29,9 +26,9 @@ data/processed/*
 docs/grill_notes_v0.1.txt
 docs/build_process_v0.1.txt
 docs/run_method_v0.1.txt
+docs/version_iterations.txt
 
 # Local env
-.env
 .env*
 !.env.example
 
@@ -41,8 +38,6 @@ docs/run_method_v0.1.txt
 
 # IDE
 .vscode/
-.idea/
 
 # OS
 Thumbs.db
-.DS_Store

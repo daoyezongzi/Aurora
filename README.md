@@ -55,6 +55,8 @@ run_aurora.bat prepare-refresh
 run_aurora.bat train
 run_aurora.bat predict
 run_aurora.bat metrics
+run_aurora.bat v2
+run_aurora.bat v2-refresh
 run_aurora.bat test
 ```
 
@@ -72,6 +74,49 @@ run_aurora.bat test
 ```powershell
 run_aurora.bat metrics
 ```
+
+## v0.2 多模型对比（LSTM + LogReg + MLP）
+
+`v2` 模式会一次性训练并评估 3 个模型：
+- `lstm`
+- `logreg`（LogisticRegression）
+- `mlp`（多层感知机）
+
+运行命令：
+
+```powershell
+run_aurora.bat v2
+```
+
+如需先刷新 Tushare 原始数据：
+
+```powershell
+run_aurora.bat v2-refresh
+```
+
+### v2 输出文件
+
+- 总表：`outputs/v2/compare_metrics.csv`
+- 总表（JSON）：`outputs/v2/compare_metrics.json`
+- 单模型指标：
+  - `outputs/v2/lstm/metrics_v2.json`
+  - `outputs/v2/logreg/metrics.json`
+  - `outputs/v2/mlp/metrics.json`
+- 单模型预测：
+  - `outputs/v2/lstm/predictions.csv`
+  - `outputs/v2/logreg/predictions.csv`
+  - `outputs/v2/mlp/predictions.csv`
+- 对比图表（SVG）：
+  - `outputs/v2/charts/metric_bars.svg`
+  - `outputs/v2/charts/roc_curves.svg`
+  - `outputs/v2/charts/confusion_matrices.svg`
+
+### 如何看 v2 结果
+
+1. 先看 `compare_metrics.csv`：快速比较三模型 `accuracy/f1/precision/recall/roc_auc`。
+2. 再看 `confusion_matrices.svg`：判断是“漏报多”还是“误报多”。
+3. 再看 `roc_curves.svg`：比较排序能力（曲线越靠左上通常越好）。
+4. 最后看各模型 `predictions.csv`：定位具体日期的预测偏差。
 
 ## Validate
 

@@ -23,6 +23,8 @@ if /I "%MODE%"=="prepare-refresh" goto prepare_refresh
 if /I "%MODE%"=="train" goto train
 if /I "%MODE%"=="predict" goto predict
 if /I "%MODE%"=="metrics" goto metrics
+if /I "%MODE%"=="v2" goto v2
+if /I "%MODE%"=="v2-refresh" goto v2_refresh
 if /I "%MODE%"=="test" goto test
 goto usage
 
@@ -50,6 +52,16 @@ goto done
 
 :metrics
 "%PYTHON%" scripts\show_metrics.py --config "%CONFIG%"
+if errorlevel 1 goto fail
+goto done
+
+:v2
+"%PYTHON%" scripts\train_v2_compare.py --config "%CONFIG%"
+if errorlevel 1 goto fail
+goto done
+
+:v2_refresh
+"%PYTHON%" scripts\train_v2_compare.py --config "%CONFIG%" --refresh
 if errorlevel 1 goto fail
 goto done
 
@@ -92,6 +104,8 @@ echo   prepare-refresh prepare data with --refresh
 echo   train           train and evaluate
 echo   predict         run latest-window inference
 echo   metrics         print metrics/predictions summary
+echo   v2              train LSTM + LogReg + MLP and make charts
+echo   v2-refresh      same as v2 with data refresh
 echo   test            run pytest
 exit /b 1
 
