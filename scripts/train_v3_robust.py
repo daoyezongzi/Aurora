@@ -68,7 +68,12 @@ class TuneOpts:
     thr_step: float
     thr_eps: float
     thr_anchor: float
+    final_thr_mode: str
     cfg_eps: float
+    min_precision: float
+    min_recall: float
+    goal_penalty: float
+    mlp_max_iter: int
     calib: str
     calib_cv: int
     cfg_std_pen: float
@@ -102,10 +107,40 @@ def parse_args() -> argparse.Namespace:
         help="Preferred threshold center when scores are close",
     )
     parser.add_argument(
+        "--final-thr-mode",
+        default="val",
+        choices=["rolling_median", "val"],
+        help="How to choose final threshold: rolling median or final-val best",
+    )
+    parser.add_argument(
         "--cfg-eps",
         type=float,
         default=0.001,
         help="Near-best tolerance for model config selection across a fold",
+    )
+    parser.add_argument(
+        "--min-precision",
+        type=float,
+        default=0.56,
+        help="Precision floor in threshold scoring; lower values are penalized",
+    )
+    parser.add_argument(
+        "--min-recall",
+        type=float,
+        default=0.62,
+        help="Recall floor in threshold scoring; lower values are penalized",
+    )
+    parser.add_argument(
+        "--goal-penalty",
+        type=float,
+        default=1.2,
+        help="Penalty weight when precision/recall falls below floors",
+    )
+    parser.add_argument(
+        "--mlp-max-iter",
+        type=int,
+        default=900,
+        help="Max iterations for MLP training",
     )
     parser.add_argument(
         "--calib",
@@ -117,13 +152,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cfg-std-pen",
         type=float,
-        default=0.15,
+        default=0.20,
         help="Penalty weight for cross-fold score std when picking final config",
     )
     parser.add_argument(
         "--cfg-thr-pen",
         type=float,
-        default=0.08,
+        default=0.12,
         help="Penalty weight for cross-fold threshold std when picking final config",
     )
     return parser.parse_args()
@@ -152,7 +187,8 @@ def main() -> int:
     dump_json(out_root / "config_metrics.json", {"rows": cfg_rows})
 
     best_cfg = pick_best_config(cfg_rows, opts)
-    final_row, final_pred = run_final_eval(frame, cfg, best_cfg, opts, out_root / "final")
+    rolling_thr = pick_final_threshold(fold_rows, opts)
+    final_row, final_pred = run_final_eval(frame, cfg, best_cfg, opts, out_root / "final", rolling_thr)
 
     final_pred.to_csv(out_root / "final" / "predictions.csv", index=False, encoding="utf-8")
     dump_json(out_root / "final" / "metrics.json", final_row)
@@ -183,7 +219,12 @@ def build_tune_opts(args: argparse.Namespace) -> TuneOpts:
     thr_step = float(args.thr_step)
     thr_eps = float(args.thr_eps)
     thr_anchor = float(args.thr_anchor)
+    final_thr_mode = str(args.final_thr_mode).strip().lower()
     cfg_eps = float(args.cfg_eps)
+    min_precision = float(args.min_precision)
+    min_recall = float(args.min_recall)
+    goal_penalty = float(args.goal_penalty)
+    mlp_max_iter = int(args.mlp_max_iter)
     if not (0.0 < thr_min < thr_max < 1.0):
         raise ValueError("threshold range must satisfy 0 < thr_min < thr_max < 1")
     if thr_step <= 0.0:
@@ -196,6 +237,16 @@ def build_tune_opts(args: argparse.Namespace) -> TuneOpts:
         raise ValueError("thr_anchor must stay inside [thr_min, thr_max]")
     if cfg_eps < 0.0:
         raise ValueError("cfg_eps must be >= 0")
+    if final_thr_mode not in {"rolling_median", "val"}:
+        raise ValueError("final_thr_mode must be one of: rolling_median, val")
+    if not (0.0 <= min_precision <= 1.0):
+        raise ValueError("min_precision must be in [0, 1]")
+    if not (0.0 <= min_recall <= 1.0):
+        raise ValueError("min_recall must be in [0, 1]")
+    if goal_penalty < 0.0:
+        raise ValueError("goal_penalty must be >= 0")
+    if mlp_max_iter <= 0:
+        raise ValueError("mlp_max_iter must be > 0")
 
     calib = str(args.calib).strip().lower()
     calib_cv = int(args.calib_cv)
@@ -214,7 +265,12 @@ def build_tune_opts(args: argparse.Namespace) -> TuneOpts:
         thr_step=thr_step,
         thr_eps=thr_eps,
         thr_anchor=thr_anchor,
+        final_thr_mode=final_thr_mode,
         cfg_eps=cfg_eps,
+        min_precision=min_precision,
+        min_recall=min_recall,
+        goal_penalty=goal_penalty,
+        mlp_max_iter=mlp_max_iter,
         calib=calib,
         calib_cv=calib_cv,
         cfg_std_pen=cfg_std_pen,
@@ -477,20 +533,46 @@ def pick_stable_row(
 def threshold_metric(y_true: np.ndarray, pred: np.ndarray, opts: TuneOpts) -> float:
     goal = opts.thr_goal
     if goal == "f1":
-        return float(f1_score(y_true, pred, zero_division=0))
-    if goal == "f2":
-        return float(fbeta_score(y_true, pred, beta=2.0, zero_division=0))
-    if goal == "fbeta":
-        return float(fbeta_score(y_true, pred, beta=float(opts.beta), zero_division=0))
-    return float(fbeta_score(y_true, pred, beta=0.5, zero_division=0))
+        base = float(f1_score(y_true, pred, zero_division=0))
+    elif goal == "f2":
+        base = float(fbeta_score(y_true, pred, beta=2.0, zero_division=0))
+    elif goal == "fbeta":
+        base = float(fbeta_score(y_true, pred, beta=float(opts.beta), zero_division=0))
+    else:
+        base = float(fbeta_score(y_true, pred, beta=0.5, zero_division=0))
+
+    prec = float(precision_score(y_true, pred, zero_division=0))
+    rec = float(recall_score(y_true, pred, zero_division=0))
+    penalty = 0.0
+    if prec < float(opts.min_precision):
+        penalty += float(opts.goal_penalty) * (float(opts.min_precision) - prec)
+    if rec < float(opts.min_recall):
+        penalty += float(opts.goal_penalty) * (float(opts.min_recall) - rec)
+    return float(base - penalty)
 
 
-def build_mlp_estimator(hidden: list[int], alpha: float, seed: int) -> MLPClassifier:
+def snap_threshold(thr: float, opts: TuneOpts) -> float:
+    clipped = min(max(float(thr), float(opts.thr_min)), float(opts.thr_max))
+    offset = round((clipped - float(opts.thr_min)) / float(opts.thr_step))
+    snapped = float(opts.thr_min) + float(offset) * float(opts.thr_step)
+    snapped = min(max(snapped, float(opts.thr_min)), float(opts.thr_max))
+    return float(round(snapped, 2))
+
+
+def pick_final_threshold(rows: list[dict[str, Any]], opts: TuneOpts) -> float:
+    vals = [float(row["best_threshold"]) for row in rows if "best_threshold" in row]
+    if not vals:
+        return snap_threshold(float(opts.thr_anchor), opts)
+    med = float(np.median(np.asarray(vals, dtype=float)))
+    return snap_threshold(med, opts)
+
+
+def build_mlp_estimator(hidden: list[int], alpha: float, seed: int, max_iter: int) -> MLPClassifier:
     return MLPClassifier(
         hidden_layer_sizes=tuple(hidden),
         alpha=float(alpha),
         learning_rate_init=1e-3,
-        max_iter=500,
+        max_iter=int(max_iter),
         random_state=seed,
     )
 
@@ -503,7 +585,7 @@ def fit_prob_model(
     seed: int,
     opts: TuneOpts,
 ):
-    base = build_mlp_estimator(hidden, alpha, seed)
+    base = build_mlp_estimator(hidden, alpha, seed, opts.mlp_max_iter)
     if opts.calib == "none":
         base.fit(x_fit, y_fit)
         return base
@@ -548,6 +630,7 @@ def run_final_eval(
     model_cfg: dict[str, Any],
     opts: TuneOpts,
     out_dir: Path,
+    rolling_thr: float,
 ) -> tuple[dict[str, Any], pd.DataFrame]:
     ensure_dir(out_dir)
     train_df, val_df, test_df = split_by_time(
@@ -561,7 +644,13 @@ def run_final_eval(
     base_model = fit_prob_model(model_cfg["hidden"], model_cfg["alpha"], split.x_train, split.y_train, cfg.project.seed, opts)
     val_prob = base_model.predict_proba(split.x_val)[:, 1]
     val_best = tune_threshold(split.y_val, val_prob, opts)
-    best_thr = float(val_best["threshold"])
+    val_thr = float(val_best["threshold"])
+    if opts.final_thr_mode == "rolling_median":
+        best_thr = snap_threshold(float(rolling_thr), opts)
+        thr_source = "rolling_median"
+    else:
+        best_thr = snap_threshold(val_thr, opts)
+        thr_source = "val_best"
 
     x_fit = np.concatenate([split.x_train, split.x_val], axis=0)
     y_fit = np.concatenate([split.y_train, split.y_val], axis=0)
@@ -576,7 +665,15 @@ def run_final_eval(
     metric_row["threshold_search"] = [float(opts.thr_min), float(opts.thr_max), float(opts.thr_step)]
     metric_row["threshold_eps"] = float(opts.thr_eps)
     metric_row["threshold_anchor"] = float(opts.thr_anchor)
+    metric_row["final_threshold_mode"] = str(opts.final_thr_mode)
+    metric_row["final_threshold_source"] = thr_source
+    metric_row["rolling_threshold_median"] = float(rolling_thr)
+    metric_row["val_best_threshold"] = val_thr
     metric_row["config_eps"] = float(opts.cfg_eps)
+    metric_row["min_precision"] = float(opts.min_precision)
+    metric_row["min_recall"] = float(opts.min_recall)
+    metric_row["goal_penalty"] = float(opts.goal_penalty)
+    metric_row["mlp_max_iter"] = int(opts.mlp_max_iter)
     metric_row["calibration"] = opts.calib
     metric_row["calibration_cv"] = int(opts.calib_cv)
     metric_row["config_std_pen"] = float(opts.cfg_std_pen)

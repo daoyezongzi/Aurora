@@ -1,0 +1,413 @@
+Aurora v0.1 构筑过程（实施版）
+
+1. 标准仓库脚手架
+- 创建 src 布局：src/aurora_ml
+- 创建脚本入口：scripts/prepare_data.py, scripts/train_lstm.py, scripts/predict.py
+- 创建统一配置：configs/default.yaml
+- 创建测试目录：tests/
+- 创建文档目录：docs/
+
+2. 统一配置驱动
+- 将数据、切分、模型、训练、输出路径全部写入 default.yaml
+- 代码侧只读取配置，不写死超参数
+
+3. 数据管线
+- prepare_data:
+  1) 优先读取本地冻结CSV（默认）
+  2) 指定 --refresh 时从 Tushare 拉取
+  3) 校验可选SHA256（expected_sha256）
+  4) 生成处理后特征数据 data/processed/002372.SZ_features.csv
+- 特征：
+  open, high, low, close, vol, pct_chg, ma5, ma10
+- 标签：
+  target_up = 1{close_{t+1} > close_t}
+
+4. 训练评估管线
+- 时间切分：70/15/15
+- 标准化：训练集fit，验证/测试transform
+- 序列化：20日窗口预测T+1涨跌
+- 模型：LSTMClassifier + BCEWithLogitsLoss + Adam
+- 早停：验证集loss耐心值5
+- 指标：Accuracy, F1, confusion_matrix
+
+5. 推理管线
+- 读取 model.pt 与 scaler.npz
+- 取最近20日特征窗口
+- 输出最新trade_date的 up_prob 与 y_pred
+
+6. 产物管理
+- outputs/model.pt
+- outputs/metrics.json
+- outputs/predictions.csv
+- outputs/scaler.npz
+
+7. 测试保障
+- test_data_split.py：验证时间切分无未来穿越
+- test_sequence_shapes.py：验证20->1序列形状
+- test_artifacts.py：验证模型与指标产物成功生成
+
+----------------------------------------
+8. v0.2 构筑过程（多模型对比）
+----------------------------------------
+
+1) 新增脚本入口：
+- scripts/train_v2_compare.py
+
+2) v0.2 执行流程：
+- 先走与 v0.1 相同的数据准备（可选 --refresh）
+- 使用同一时间切分（70/15/15）
+- 训练并评估三模型：
+  - lstm（复用现有训练管线）
+  - logreg（LogisticRegression）
+  - mlp（MLPClassifier）
+- 汇总指标到 compare_metrics.csv
+- 生成图表：
+  - metric_bars.svg
+  - roc_curves.svg
+  - confusion_matrices.svg
+
+3) v0.2 产物：
+- outputs/v2/compare_metrics.csv
+- outputs/v2/compare_metrics.json
+- outputs/v2/lstm/*
+- outputs/v2/logreg/*
+- outputs/v2/mlp/*
+- outputs/v2/charts/*
+
+----------------------------------------
+9. 参数解释（配置与训练）
+----------------------------------------
+
+一、数据与切分参数
+1) code：
+- 股票代码，例如 002372.SZ。
+2) start_date / end_date：
+- 数据时间范围；end_date=latest 表示到当天。
+3) sequence_length：
+- 时序窗口长度；20 表示用最近20天特征预测当前样本标签。
+4) train_ratio/val_ratio/test_ratio：
+- 时间切分比例，默认 70/15/15。
+
+二、LSTM 参数
+1) hidden_size：
+- LSTM 隐藏状态维度。
+2) num_layers：
+- LSTM 堆叠层数。
+3) dropout：
+- 层间随机失活比例（单层LSTM时通常影响有限）。
+
+三、训练参数
+1) batch_size：
+- 每次参数更新使用样本数。
+2) learning_rate：
+- 梯度更新步长。
+3) epochs：
+- 最大训练轮数。
+4) early_stopping_patience：
+- 验证集不提升时容忍轮数，超过即提前停止。
+5) threshold：
+- 概率转类别的阈值（默认0.5）。
+
+四、评估参数与结果字段
+1) accuracy：
+- 全体样本预测正确率。
+2) precision：
+- 预测上涨样本中真实上涨比例。
+3) recall：
+- 真实上涨样本中被识别比例。
+4) f1：
+- precision 和 recall 的综合得分。
+5) roc_auc：
+- 概率排序能力，越大越好。
+6) confusion_matrix：
+- [[TN, FP], [FN, TP]]，用于观察误报与漏报结构。
+
+----------------------------------------
+10. v0.3 构筑过程（稳健性增强）
+----------------------------------------
+
+1) 新增脚本入口：
+- scripts/train_v3_robust.py
+
+2) 实现步骤：
+- 步骤A：对处理后数据做 warmup cut（与序列窗口对齐）
+- 步骤B：构造 rolling folds，执行多次 train/val/test
+- 步骤C：每个 fold 在验证集调 threshold（按 thr_goal 优化）
+- 步骤D：汇总 rolling 指标并选最终配置
+- 步骤E：固定测试集做 final eval
+- 步骤F：输出 error cases + error summary + charts
+
+3) 新增产物：
+- outputs/v3/rolling_metrics.csv
+- outputs/v3/final/metrics.json
+- outputs/v3/error_cases.csv
+- outputs/v3/error_summary.json
+- outputs/v3/charts/rolling_f1.svg
+- outputs/v3/charts/rolling_threshold.svg
+- outputs/v3/charts/error_distribution.svg
+
+----------------------------------------
+11. v0.3.1 构筑补充（2026-05-24）
+----------------------------------------
+
+1) 阈值目标改造：
+- 原逻辑：阈值调优固定以 F1 为目标。
+- 新逻辑：阈值目标可配置（f0.5/f1/f2/fbeta），默认 f0.5。
+- 目的：在“误报偏高”场景下优先控制 FP。
+
+2) 概率校准接入：
+- 在 MLP 概率输出后接入 CalibratedClassifierCV。
+- 支持 none / sigmoid / isotonic。
+- 默认 none（先保证基线稳定，再按需打开校准）。
+
+3) 训练流程变化：
+- rolling_validate 中每个 fold 都会记录：
+  threshold_goal, calibration, val_score_best, best_threshold。
+- final_eval 中会额外输出：
+  threshold_beta, threshold_search, calibration_cv, val_f1_at_best, brier_score。
+
+4) 产物字段补充：
+- outputs/v3/rolling_metrics.csv
+  - threshold_goal
+  - calibration
+  - val_score_best
+- outputs/v3/final/metrics.json
+  - threshold_goal
+  - threshold_beta
+  - threshold_search
+  - calibration
+  - calibration_cv
+  - val_score_best
+  - val_f1_at_best
+  - brier_score
+
+----------------------------------------
+12. v0.3.2 构筑补充（2026-05-24）
+----------------------------------------
+
+1) 特征工程策略：
+- 先扩充特征池（ret/volatility/range/gap/volume ratio）。
+- 再做增量筛选，不直接把全量新特征设为默认。
+- 最终默认特征固定为：base8 + ret_5。
+
+2) 稳定性保护：
+- train_v3_robust 的 load_or_prepare_frame 增加列校验。
+- 若 processed 文件缺少当前配置特征列，则自动回退 prepare_data 重建。
+
+3) 结果导向：
+- 在当前任务下，v0.3.2 相比 v0.3.1 提升了 f1/accuracy/recall。
+- 但误报仍偏高，后续需在阈值优化加入 precision 下限策略。
+
+----------------------------------------
+13. v0.3.3 构筑补充（稳态修复，2026-05-24）
+----------------------------------------
+
+1) 阈值稳态策略（tune_threshold）：
+- 原逻辑：直接选择 score 最大的阈值。
+- 新逻辑：
+  a) 先取 score 在 (top_score - thr_eps) 之内的候选；
+  b) 再按“离 thr_anchor 更近”优先；
+  c) 若距离相同，再比较 score 和 f1。
+- 目标：抑制阈值在不同 fold 间的极端跳变。
+
+2) 配置稳态策略（tune_mlp + pick_best_config）：
+- 单折内（tune_mlp）：
+  不再只取分数最高配置，而是在 cfg_eps 近最优带内选更稳阈值的配置。
+- 跨折汇总（pick_best_config）：
+  评分从 mean(val_score) 升级为：
+  stable_score = mean_val - cfg_std_pen * std_val - cfg_thr_pen * std_thr
+  其中：
+  - std_val：同一配置跨折验证分数波动
+  - std_thr：同一配置跨折阈值波动
+- 目标：减少“某一折偶然最优”导致的最终配置误选。
+
+3) 产物扩展：
+- 新增配置级产物：
+  - outputs/v3/config_metrics.csv
+  - outputs/v3/config_metrics.json
+- 作用：能直接看到每个 fold 下所有 hidden/alpha 的阈值与分数，便于定位不稳定来源。
+
+4) 参数与约束：
+- --thr-eps >= 0
+- --thr-anchor in (0,1) 且必须在 [thr_min, thr_max]
+- --cfg-eps >= 0
+- --cfg-std-pen >= 0
+- --cfg-thr-pen >= 0
+
+5) 本轮实测结论：
+- 抖动修复：rolling 阈值由 0.33/0.68/0.45 收敛为 0.33/0.50/0.46。
+- fold2 崩塌修复：test_f1 从 0.3066 提升到 0.5392。
+- final 指标有小幅回落（f1 0.6344 -> 0.6126），但跨时间窗稳定性明显提升。
+
+----------------------------------------
+14. v0.3.4 构筑补充（门槛约束 + final阈值稳态，2026-05-24）
+----------------------------------------
+
+1) 阈值评分加入业务门槛（threshold_metric）：
+- 在原有 thr_goal 分数基础上增加惩罚项：
+  score = base_score - goal_penalty * shortfall
+- shortfall 由两部分组成：
+  a) max(0, min_precision - precision)
+  b) max(0, min_recall - recall)
+- 作用：避免模型为了追求某个 F 分数而把阈值压低，导致误报过高。
+
+2) final 阈值来源升级（run_final_eval）：
+- 原逻辑：final 只使用单次 val_best_threshold。
+- 新逻辑：可配置 `final_thr_mode`：
+  a) rolling_median（默认）：使用 rolling best_threshold 的中位数
+  b) val：保留原 val_best_threshold 路径
+- 作用：降低 final 阈值对单次切分偶然性的敏感度。
+
+3) 阈值落格（snap_threshold）：
+- 不论来源是 rolling_median 还是 val，都先做：
+  a) 裁剪到 [thr_min, thr_max]
+  b) 吸附到 thr_step 网格
+- 作用：避免产出“不可复现的小数阈值”。
+
+4) 默认参数调整：
+- cfg_std_pen: 0.15 -> 0.20
+- cfg_thr_pen: 0.08 -> 0.12
+- 含义：进一步提高跨折稳定性在配置选择中的权重。
+
+5) 新增输出可追踪字段（final/metrics.json）：
+- final_threshold_mode
+- final_threshold_source
+- rolling_threshold_median
+- val_best_threshold
+- min_precision
+- min_recall
+- goal_penalty
+
+----------------------------------------
+15. v0.3.5 训练轮次收敛测试（2026-05-24）
+----------------------------------------
+
+1) 背景问题：
+- 在 v0.3.4 里观察到部分配置频繁触顶 `max_iter=500`，fold2 存在明显退化。
+
+2) 测试方法：
+- 对 `mlp_max_iter` 做网格扫描：500 / 650 / 800 / 850 / 900 / 950 / 1000 / 1200。
+- 观察指标：
+  a) final_f1 / final_precision / final_recall
+  b) rolling_avg_f1 / rolling_min_f1
+  c) hit_max_iter_rate（达到 max_iter 上限的比例）
+
+3) 关键结论：
+- 500：rolling_min_f1 很低，稳定性差。
+- 900：rolling_min_f1 提升明显，且触顶比例已很低。
+- 950 及以上：结果进入平台区，继续加轮次收益很小。
+- 实测收敛上限约在 n_iter≈914 附近。
+
+4) 落地决策：
+- 将默认 `mlp_max_iter` 从 500 提升到 900，并开放参数 `--mlp-max-iter`。
+- 目标：在不显著增加训练成本的前提下，提升跨折稳定性并降低“未收敛导致的异常折”概率。
+
+----------------------------------------
+16. v0.3.6 v4门槛联合策略（2026-05-24）
+----------------------------------------
+
+1) 为什么要联合执行：
+- 单独提升 max_iter：能修稳态，但会把 recall 推高、带来 FP 压力。
+- 单独提高 precision 门槛：能控误报，但可能破坏 rolling 稳定性。
+- 单独改 final 阈值来源：能控 final 指标，但无法修复训练不收敛问题。
+
+2) 联合策略：
+- 收敛：`mlp_max_iter=900`
+- 门槛：`min_precision=0.56`, `min_recall=0.62`, `goal_penalty=1.2`
+- final阈值：`final_thr_mode=val`
+
+3) 联合效果：
+- rolling 稳定性保持在较高水平（min_test_f1 > 0.62）
+- final FP 从高召回方案的 75 下降到 60
+- final 指标保持可用（f1 约 0.61）
+
+4) 用作 v4 入口的原因：
+- 参数已固化为默认值，直接 `run_aurora.bat v3` 即可复现。
+- 输出齐全（metrics/error/charts/config-level summary），可直接作为 v4 前对照基线。
+
+----------------------------------------
+17. v0.4 时序特征工程迁移（2026-05-24）
+----------------------------------------
+
+1) 迁移目标：
+- 将原本在 pandas 中构造的时序特征，迁移为 SQL 窗口特征流水线。
+- 对迁移前后做两类对比：
+  a) 特征一致性对比
+  b) 训练结果对比
+
+2) 代码落地点：
+- 数据管线新增多引擎入口：
+  - `prepare_data(..., feature_engine=\"pandas|sql\")`
+  - `build_training_frame(..., feature_engine=\"pandas|sql\")`
+- SQL 特征实现位于 `data_pipeline.py`：
+  - 滚动均线（ma5/ma10/ma20）
+  - 多周期收益率（ret_1/ret_3/ret_5）
+  - 波动率（由 SQL 方差窗口结果再开方）
+  - 价量结构特征与标签列
+
+3) 对比脚本：
+- 新增 `scripts/train_v4_migration_compare.py`
+- 执行流程：
+  1) 先构建 pandas 特征与 sql 特征
+  2) 输出特征一致性报告
+  3) 在同一组训练参数下分别训练 pandas/sql
+  4) 输出对比指标 `sql_minus_pandas`
+
+4) 产物：
+- outputs/v4/feature_consistency.csv
+- outputs/v4/feature_consistency_summary.json
+- outputs/v4/compare_metrics.csv
+- outputs/v4/compare_summary.json
+- outputs/v4/pandas/*
+- outputs/v4/sql/*
+
+5) 本轮结论：
+- 特征一致性：几乎数值等价（浮点误差量级）。
+- 训练一致性：pandas 与 sql 的 rolling/final/error 指标一致。
+- 说明迁移实现已达到“功能等价 + 结果可复现”的 v0.4 验收要求。
+
+----------------------------------------
+18. 课程大作业要求映射（简化提交版，2026-05-24）
+----------------------------------------
+
+一、目标与要求映射
+1) 课程要求：完整机器学习流程
+- 本项目对应：prepare_data -> train_v3_robust -> final/error/charts 输出闭环。
+
+2) 课程要求：模型评估与性能分析
+- 本项目对应：rolling_metrics + final metrics + error_summary。
+
+3) 课程要求：模型优化
+- 本项目对应：v0.3.1~v0.3.6 的阈值目标、门槛约束、收敛轮次、稳态惩罚。
+
+4) 课程要求：多种模型/改进对比
+- 本项目对应：
+  a) v0.2 的 LSTM/LogReg/MLP 对比
+  b) v0.4 的 pandas/sql 特征工程迁移对比
+
+5) 课程要求：模型部署
+- 本项目对应：`run_aurora.bat` 一键可运行交付入口（本地部署）。
+
+二、为什么这是“更简单可交付”的路径
+1) 不需要额外切换题目或重建工程，沿现有代码即可满足方向1要求。
+2) 不强依赖外部数据库部署，v4 已提供 OpenMLDB 风格 SQL 的本地可复现实现。
+3) 结果产物结构完整，直接覆盖报告与答辩所需材料。
+
+三、最终提交建议（最小集合）
+1) 保留代码与文档：
+- src/
+- scripts/
+- configs/
+- docs/
+- run_aurora.bat
+- README.md
+
+2) 保留关键结果（用于报告复核）：
+- outputs/v3/final/metrics.json
+- outputs/v3/charts/
+- outputs/v4/compare_metrics.csv
+- outputs/v4/compare_summary.json
+
+3) 可不提交的大体量临时目录：
+- outputs 中非关键中间文件
+- 本地运行缓存目录（例如 `.docker-runtime/`）

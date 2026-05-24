@@ -1,0 +1,114 @@
+Aurora v0.1 Grill纪要（阶段A：先完成作业，再对接TradeEye）
+
+一、选题与范围
+1) 任务：次日涨跌二分类（不是回归）。
+2) 数据：先用Tushare拉取002372.SZ，冻结本地CSV快照。
+3) 模型：PyTorch LSTM。
+4) 边界：v0.1 只做作业闭环，不改TradeEye代码。
+
+二、标签与切分
+1) 标签定义：y_t = 1{close_{t+1} > close_t}，否则0。
+2) 时间切分：70%训练，15%验证，15%测试。
+3) 时序窗口：20 -> 1。
+4) 禁止数据泄漏：
+   - 仅训练集fit标准化器
+   - 验证/测试只transform
+   - 不做随机打乱跨时序切分
+
+三、v0.1 默认配置
+1) hidden_size=64
+2) num_layers=1
+3) batch_size=32
+4) learning_rate=1e-3
+5) epochs=30
+6) early_stopping_patience=5
+7) threshold=0.5
+8) seed=42
+9) 设备策略：cuda可用就用cuda，否则自动回退cpu
+
+四、交付与验收
+1) 核心产物：
+   - outputs/model.pt
+   - outputs/metrics.json
+   - outputs/predictions.csv
+2) 最小测试：
+   - 时间切分无穿越
+   - 序列形状20->1
+   - 训练产物可落盘
+3) 数据策略：
+   - 默认用本地冻结数据
+   - 只有--refresh才重新从Tushare拉取
+
+五、后续版本规划
+1) v0.2：补基线对比（LogisticRegression + MLP）
+2) v0.3：滚动验证与阈值调优
+3) v0.4：将特征工程迁移到OpenMLDB
+4) v1.1：课程后对接TradeEye
+
+六、v0.2 实测记录（2026-05-23）
+1) 对比数据文件：
+   - outputs/v2/compare_metrics.csv
+2) 结果摘录：
+   - lstm: accuracy=0.5170, f1=0.0000, roc_auc=0.4546
+   - logreg: accuracy=0.5114, f1=0.1569, roc_auc=0.5279
+   - mlp: accuracy=0.5568, f1=0.6061, roc_auc=0.5625
+3) 结论：
+   - 当前最佳为 mlp（综合指标最优）。
+   - lstm 当前配置下退化严重（全预测0倾向明显）。
+   - logreg 可作为解释性较好的保守基线。
+
+七、为什么这组结果“有含金量”
+1) 不只看 accuracy，而是同时看 f1/recall/roc_auc。
+2) 三模型在同一数据切分下对比，实验可复现。
+3) 有图表和预测明细，便于答辩时解释模型行为差异。
+
+八、关键参数解释（简版）
+1) threshold：
+   把概率转类别的阈值，默认0.5。
+2) precision：
+   预测上涨里有多少是真的上涨。
+3) recall：
+   真实上涨里有多少被预测到了。
+4) f1：
+   precision 与 recall 的综合分数。
+5) roc_auc：
+   概率排序能力，0.5近似随机，越大越好。
+
+九、v0.3 本轮落地摘要（不重复问答版）
+1) 已按既定计划执行，不重复 grill 已确认问题。
+2) 实现内容：
+   - rolling validation
+   - threshold tuning
+   - error analysis
+3) 实测结论：
+   - rolling folds 的 test_f1 在 0.64~0.68 区间。
+   - 最终 fixed test 上 f1=0.6133，略高于 v0.2 mlp 的 0.6061。
+   - 模型偏高召回，误报偏多（FP>FN）。
+
+十、v0.3.1 补充决策（2026-05-24）
+1) 目标：
+   - 在不改 bat 入口的前提下，补充“可控误报”的阈值目标机制。
+   - 加入概率校准能力，但不强制默认开启。
+
+2) 代码侧决策：
+   - 阈值目标新增：f0.5 / f1 / f2 / fbeta。
+   - 默认阈值目标改为 f0.5（优先 precision）。
+   - 校准方式新增：none / sigmoid / isotonic，默认 none。
+
+3) 文档侧决策：
+   - 在 run_method/build_process/version_iterations 补齐参数含义和实测结果。
+   - 明确新增输出字段：threshold_goal、calibration、val_score_best、brier_score 等。
+
+4) 本轮结果解读：
+   - 相比上一轮，FP 从 60 降到 48，但 FN 从 27 升到 40。
+   - 说明“控误报”方向生效，但整体 f1 下滑，需要后续特征增强来补偿。
+
+十一、v0.3.2 特征筛选决策（2026-05-24）
+1) 目标：
+   - 在不切到 v4 的前提下，先做“可复现的小步快跑”特征增强。
+2) 决策：
+   - 保留扩展特征计算能力。
+   - 默认特征仅启用筛选后组合：base8 + ret_5。
+3) 结果：
+   - 相比 v0.3.1 默认，f1/accuracy/recall 上升。
+   - roc_auc 小幅回落，误报仍高，后续继续做阈值约束策略。

@@ -24,6 +24,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Force refresh raw data from Tushare even if local snapshot exists",
     )
+    parser.add_argument(
+        "--feature-engine",
+        default="pandas",
+        choices=["pandas", "sql"],
+        help="Feature engineering engine",
+    )
     return parser.parse_args()
 
 
@@ -32,13 +38,19 @@ def main() -> int:
     load_dotenv()
     config = load_config(args.config)
     token = os.getenv("TUSHARE_TOKEN", "").strip()
-    prepared = prepare_data(config=config, refresh=args.refresh, tushare_token=token)
+    prepared = prepare_data(
+        config=config,
+        refresh=args.refresh,
+        tushare_token=token,
+        feature_engine=args.feature_engine,
+    )
 
     print(f"[Aurora] raw rows: {len(prepared.raw_df)}")
     print(f"[Aurora] train rows: {len(prepared.train_df)}")
     print(f"[Aurora] raw path: {prepared.raw_path}")
     print(f"[Aurora] processed path: {prepared.processed_path}")
     print(f"[Aurora] raw sha256: {prepared.raw_sha256}")
+    print(f"[Aurora] feature engine: {args.feature_engine}")
     return 0
 
 

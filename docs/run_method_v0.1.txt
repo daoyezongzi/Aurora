@@ -1,0 +1,411 @@
+Aurora 运行方法（v0.1 + v0.2）
+
+前置要求
+1) Python 3.11+（推荐3.11）
+2) 可用的 TUSHARE_TOKEN（首次拉数或刷新数据时需要）
+
+步骤一：安装依赖
+1) python -m venv .venv
+2) .\.venv\Scripts\Activate.ps1
+3) pip install -r requirements-dev.txt
+
+步骤二：配置环境变量
+1) 在 .env 中设置：
+   TUSHARE_TOKEN=你的token
+
+步骤三：准备数据
+1) 默认模式（优先复用本地冻结CSV）：
+   python scripts/prepare_data.py --config configs/default.yaml
+2) 强制刷新：
+   python scripts/prepare_data.py --config configs/default.yaml --refresh
+
+步骤四：训练与评估
+1) python scripts/train_lstm.py --config configs/default.yaml
+2) 结果文件：
+   - outputs/model.pt
+   - outputs/metrics.json
+   - outputs/predictions.csv
+
+步骤五：推理
+1) python scripts/predict.py --config configs/default.yaml
+
+步骤六：测试
+1) python -m pytest -q
+
+----------------------------------------
+v0.2 一键对比运行
+----------------------------------------
+
+命令：
+1) 直接跑 v0.2：
+   run_aurora.bat v2
+2) 先刷新数据再跑 v0.2：
+   run_aurora.bat v2-refresh
+
+v0.2 关键输出：
+1) 对比总表：
+   - outputs/v2/compare_metrics.csv
+   - outputs/v2/compare_metrics.json
+2) 单模型指标：
+   - outputs/v2/lstm/metrics_v2.json
+   - outputs/v2/logreg/metrics.json
+   - outputs/v2/mlp/metrics.json
+3) 单模型预测：
+   - outputs/v2/lstm/predictions.csv
+   - outputs/v2/logreg/predictions.csv
+   - outputs/v2/mlp/predictions.csv
+4) 图表：
+   - outputs/v2/charts/metric_bars.svg
+   - outputs/v2/charts/roc_curves.svg
+   - outputs/v2/charts/confusion_matrices.svg
+
+----------------------------------------
+参数与指标解释（看不懂先看这里）
+----------------------------------------
+
+一、运行参数
+1) --refresh
+- 含义：是否重新从 Tushare 拉取原始数据。
+- 默认：不加时为 false（优先用本地冻结 CSV）。
+
+2) threshold
+- 含义：把概率转成 0/1 的分界线。
+- 例子：threshold=0.5 时，up_prob>=0.5 判为上涨(1)。
+
+二、模型超参数
+1) hidden_size（LSTM）
+- 含义：隐藏层维度，越大表达能力越强，但更容易过拟合、训练更慢。
+
+2) num_layers（LSTM）
+- 含义：LSTM 堆叠层数，层数越多复杂度越高。
+
+3) batch_size
+- 含义：每次梯度更新使用的样本数。
+
+4) learning_rate
+- 含义：学习率，过大会震荡，过小会训练慢或陷入局部最优。
+
+5) epochs
+- 含义：最多训练轮数。
+
+6) early_stopping_patience
+- 含义：验证集指标连续多少轮不提升后提前停止。
+
+三、评估指标
+1) accuracy
+- 含义：整体预测正确比例。
+- 注意：类别不平衡时可能“看起来高但没用”。
+
+2) precision
+- 含义：预测为上涨的样本里，真实上涨的比例。
+
+3) recall
+- 含义：真实上涨的样本里，被模型抓到的比例。
+
+4) f1
+- 含义：precision 与 recall 的综合指标（调和平均）。
+- 用途：二分类中常用主指标，能兼顾误报和漏报。
+
+5) roc_auc
+- 含义：模型排序能力，越接近 1 越好，0.5 约等于随机。
+
+6) confusion_matrix
+- 含义：混淆矩阵，格式是 [[TN, FP], [FN, TP]]。
+- TN：真负，FP：假正，FN：假负，TP：真正。
+
+7) sample_count
+- 含义：该模型用于评估的测试样本数。
+
+----------------------------------------
+v0.3 运行方法（稳健性增强）
+----------------------------------------
+
+命令：
+1) 直接跑 v0.3：
+   run_aurora.bat v3
+2) 先刷新数据再跑 v0.3：
+   run_aurora.bat v3-refresh
+
+v0.3 输出：
+1) 滚动验证：
+   - outputs/v3/rolling_metrics.csv
+   - outputs/v3/rolling_metrics.json
+2) 最终评估：
+   - outputs/v3/final/metrics.json
+   - outputs/v3/final/predictions.csv
+3) 误差分析：
+   - outputs/v3/error_cases.csv
+   - outputs/v3/error_summary.json
+4) 图表：
+   - outputs/v3/charts/rolling_f1.svg
+   - outputs/v3/charts/rolling_threshold.svg
+   - outputs/v3/charts/error_distribution.svg
+
+v0.3 关键参数解释：
+1) rolling validation
+- 含义：按时间滑动窗口重复训练和测试，不只看一次切分结果。
+- 目的：降低“单次切分偶然性”。
+
+2) best_threshold
+- 含义：在验证集上按当前目标（thr_goal）搜索后得到的阈值。
+- 用途：替代固定 0.5 阈值，提高分类实用性。
+
+3) near_threshold_error_rate
+- 含义：错误样本中，概率接近最终阈值区域（|up_prob-threshold|<=0.05）的占比。
+- 含义解读：占比越高，说明更多错误是“犹豫区间”导致，可通过阈值和置信度策略优化。
+
+----------------------------------------
+v0.3.1 运行补充（阈值目标 + 概率校准）
+----------------------------------------
+
+默认命令（bat 不变）：
+1) run_aurora.bat v3
+
+可选高级命令（直接调用脚本）：
+1) python scripts/train_v3_robust.py --config configs/default.yaml --thr-goal f0.5 --calib none
+2) python scripts/train_v3_robust.py --config configs/default.yaml --thr-goal f1 --calib sigmoid --calib-cv 3
+3) python scripts/train_v3_robust.py --config configs/default.yaml --thr-goal fbeta --beta 0.8 --calib isotonic
+
+新增参数解释：
+1) --thr-goal
+- 含义：阈值搜索优化目标。
+- 可选：f0.5 / f1 / f2 / fbeta。
+- 默认：f0.5（更偏向控制误报）。
+
+2) --beta
+- 含义：当 --thr-goal=fbeta 时的 beta。
+- 解释：beta<1 更重 precision，beta>1 更重 recall。
+
+3) --thr-min / --thr-max / --thr-step
+- 含义：阈值搜索网格范围与步长。
+- 默认：0.30 ~ 0.70，步长 0.01。
+
+4) --calib
+- 含义：概率校准方法。
+- 可选：none / sigmoid / isotonic。
+- 默认：none（先保证基线稳定）。
+
+5) --calib-cv
+- 含义：校准时的交叉验证折数。
+- 默认：3。
+
+新增输出字段（final/metrics.json）：
+1) threshold_goal：阈值优化目标
+2) threshold_beta：阈值目标使用的 beta
+3) threshold_search：[min, max, step]
+4) calibration：校准方法
+5) calibration_cv：校准折数
+6) val_score_best：验证集最优目标分数
+7) val_f1_at_best：该阈值下的验证集 F1
+8) brier_score：概率校准质量（越低通常越好）
+
+----------------------------------------
+v0.3.2 运行补充（特征筛选落地）
+----------------------------------------
+
+当前默认特征（configs/default.yaml）：
+1) open
+2) high
+3) low
+4) close
+5) vol
+6) pct_chg
+7) ma5
+8) ma10
+9) ret_5
+
+说明：
+1) 数据管线已支持更大的扩展特征池，但默认只启用“筛选后最稳组合”。
+2) 直接运行 v3 时，如果检测到 processed 文件缺失当前特征列，会自动回退重建数据。
+
+----------------------------------------
+v0.3.3 运行补充（稳态修复）
+----------------------------------------
+
+默认命令（bat 不变）：
+1) run_aurora.bat v3
+
+可选高级命令（直接调用脚本）：
+1) python scripts/train_v3_robust.py --config configs/default.yaml --thr-eps 0.01 --thr-anchor 0.5
+2) python scripts/train_v3_robust.py --config configs/default.yaml --cfg-eps 0.001 --cfg-std-pen 0.15 --cfg-thr-pen 0.08
+
+新增参数解释：
+1) --thr-eps
+- 含义：阈值“近最优带”容差。先保留分数接近最优的阈值，再从中选更稳的。
+- 默认：0.01。
+- 影响：越大越稳但可能牺牲一点当前分数；越小越激进更追求单点最优。
+
+2) --thr-anchor
+- 含义：阈值稳定锚点（近最优带内优先靠近该值）。
+- 默认：0.50。
+- 约束：必须落在 [thr_min, thr_max] 范围内。
+
+3) --cfg-eps
+- 含义：单折内模型配置的“近最优带”容差（用于 hidden/alpha 选择）。
+- 默认：0.001。
+
+4) --cfg-std-pen
+- 含义：跨折验证分数标准差惩罚权重（越大越偏向稳定配置）。
+- 默认：0.20。
+
+5) --cfg-thr-pen
+- 含义：跨折阈值标准差惩罚权重（越大越抑制阈值跳变大的配置）。
+- 默认：0.12。
+
+v0.3.3 新增输出：
+1) 配置级指标（新增）
+- outputs/v3/config_metrics.csv
+- outputs/v3/config_metrics.json
+
+2) rolling 指标新增字段
+- threshold_anchor
+- threshold_eps
+- config_eps
+
+3) final 指标新增字段
+- threshold_eps
+- threshold_anchor
+- config_eps
+- config_std_pen
+- config_thr_pen
+
+----------------------------------------
+v0.3.4 运行补充（门槛约束 + final阈值稳态）
+----------------------------------------
+
+默认命令（bat 不变）：
+1) run_aurora.bat v3
+
+可选高级命令（直接调用脚本）：
+1) python scripts/train_v3_robust.py --config configs/default.yaml --final-thr-mode rolling_median
+2) python scripts/train_v3_robust.py --config configs/default.yaml --min-precision 0.54 --min-recall 0.62 --goal-penalty 0.8
+3) python scripts/train_v3_robust.py --config configs/default.yaml --final-thr-mode val --min-precision 0.52 --min-recall 0.60
+
+新增参数解释：
+1) --final-thr-mode
+- 含义：final 阶段阈值来源。
+- 可选：rolling_median / val。
+- 默认：val（使用 final 验证集最优阈值）。
+
+2) --min-precision
+- 含义：阈值搜索时 precision 下限。
+- 默认：0.56。
+- 机制：若某阈值的 precision 低于该值，会被扣分。
+
+3) --min-recall
+- 含义：阈值搜索时 recall 下限。
+- 默认：0.62。
+- 机制：若某阈值的 recall 低于该值，会被扣分。
+
+4) --goal-penalty
+- 含义：低于 precision/recall 下限时的扣分强度。
+- 默认：1.2。
+- 影响：越大越严格，越会抑制“高召回但误报高”的阈值。
+
+5) --mlp-max-iter
+- 含义：MLP 的最大训练轮次上限。
+- 默认：900。
+- 建议：500 在本项目上容易出现“部分配置未收敛”，900 是当前较稳收敛点。
+
+v0.3.4 新增输出字段（final/metrics.json）：
+1) final_threshold_mode
+2) final_threshold_source
+3) rolling_threshold_median
+4) val_best_threshold
+5) min_precision
+6) min_recall
+7) goal_penalty
+8) mlp_max_iter
+
+当前推荐的“v4门槛默认配置”（已写入脚本默认值）：
+1) final_thr_mode = val
+2) min_precision = 0.56
+3) min_recall = 0.62
+4) goal_penalty = 1.2
+5) mlp_max_iter = 900
+
+----------------------------------------
+v0.4 运行补充（时序特征工程迁移 + 前后对比）
+----------------------------------------
+
+默认命令：
+1) run_aurora.bat v4
+2) run_aurora.bat v4-refresh
+
+可选高级命令（直接调用脚本）：
+1) python scripts/train_v4_migration_compare.py --config configs/default.yaml
+2) python scripts/train_v4_migration_compare.py --config configs/default.yaml --refresh
+
+v0.4 输出：
+1) 迁移前（pandas）训练结果：
+- outputs/v4/pandas/rolling_metrics.csv
+- outputs/v4/pandas/final/metrics.json
+- outputs/v4/pandas/error_summary.json
+
+2) 迁移后（sql）训练结果：
+- outputs/v4/sql/rolling_metrics.csv
+- outputs/v4/sql/final/metrics.json
+- outputs/v4/sql/error_summary.json
+
+3) 一致性与对比：
+- outputs/v4/feature_consistency.csv
+- outputs/v4/feature_consistency_summary.json
+- outputs/v4/compare_metrics.csv
+- outputs/v4/compare_summary.json
+
+v0.4 关键说明：
+1) `sql` 引擎是 OpenMLDB 风格的 SQL 窗口特征流水线（本地可复现实现）。
+2) 迁移对比固定同一套训练参数，确保对比公平。
+3) `compare_metrics.csv` 中 `sql_minus_pandas` 为迁移前后指标差值。
+
+----------------------------------------
+课程大作业最简可交付路径（按说明直接执行）
+----------------------------------------
+
+目标：
+1) 满足“完整机器学习流程 + 多模型/多阶段对比 + 可运行代码 + 可解释结果”
+2) 产出可直接写报告和答辩PPT的图表与指标
+
+一、最少命令（Windows）
+1) run_aurora.bat v3
+2) run_aurora.bat v4
+3) python -m pytest -q
+
+二、这三步分别解决什么
+1) v3
+- 生成稳健训练结果（rolling/final/error/charts），用于报告的主结果。
+2) v4
+- 生成“迁移前后对比”结果（pandas vs sql），用于报告第7部分“比较”。
+3) pytest
+- 证明项目可运行，支持“代码包可复现”要求。
+
+三、报告写作对应材料（直接可引用）
+1) 数据处理：
+- scripts/prepare_data.py
+- src/aurora_ml/data_pipeline.py
+2) 训练配置：
+- configs/default.yaml
+- scripts/train_v3_robust.py
+3) 评估结果：
+- outputs/v3/final/metrics.json
+- outputs/v3/charts/*.svg
+4) 改进与比较：
+- outputs/v4/feature_consistency_summary.json
+- outputs/v4/compare_metrics.csv
+
+四、参数直白解释（最常用）
+1) mlp_max_iter
+- 意思：MLP 最多训练多少轮。太小会没收敛，太大收益变小。
+2) min_precision / min_recall
+- 意思：阈值搜索时要求“最低精准率/最低召回率”。
+3) goal_penalty
+- 意思：没达到最低门槛时扣多少分，越大越严格。
+4) final_thr_mode
+- 意思：final 阈值从哪里来（rolling_median 或 val）。
+5) feature_engine
+- 意思：特征构造引擎（pandas 或 sql）。
+
+五、关于 OpenMLDB 的说明（避免误解）
+1) 本项目 v4 使用的是“OpenMLDB 风格 SQL 特征流程”的本地可复现实现。
+2) 课程交付不要求你必须本地部署 OpenMLDB 服务。
+3) 若老师要求演示数据库版，可在后续扩展，不影响当前提交。

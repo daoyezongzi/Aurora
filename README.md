@@ -1,10 +1,7 @@
 # Aurora
 
-Aurora 当前交付主线是 **v0.3 稳健性增强**，目标是：
-
-1. Rolling validation（滚动验证）
-2. Threshold tuning（阈值调优）
-3. Error analysis（误差分析）
+Aurora 当前交付主线是 **v0.4 时序特征工程迁移与对比**。  
+课程方向采用“方向1：自主选题（结构化时序二分类）”。
 
 ## Quick Start
 
@@ -24,9 +21,7 @@ TUSHARE_TOKEN=your_token_here
 
 ## One-Click (Windows BAT)
 
-仓库根目录脚本：[run_aurora.bat](D:\Github_Storage\Py_finalwork\run_aurora.bat)
-
-默认直接运行 v0.3：
+默认执行 v0.3 稳态训练：
 
 ```powershell
 run_aurora.bat
@@ -39,6 +34,8 @@ run_aurora.bat prepare
 run_aurora.bat prepare-refresh
 run_aurora.bat v3
 run_aurora.bat v3-refresh
+run_aurora.bat v4
+run_aurora.bat v4-refresh
 run_aurora.bat test
 ```
 
@@ -46,35 +43,56 @@ run_aurora.bat test
 
 1. `prepare`：准备数据（优先本地冻结数据）
 2. `prepare-refresh`：强制从 Tushare 拉新数据
-3. `v3`：执行 v0.3 全流程（rolling + threshold + error analysis）
+3. `v3`：执行 v0.3 稳健流程（rolling + threshold + error analysis）
 4. `v3-refresh`：先刷新数据，再执行 v0.3
-5. `test`：运行最小测试集
+5. `v4`：执行 v0.4 迁移对比（pandas vs sql）
+6. `v4-refresh`：先刷新数据，再执行 v0.4
+7. `test`：运行最小测试集
 
-## v0.3 输出文件
+## v0.4 新增内容
 
-1. 滚动验证：
-- `outputs/v3/rolling_metrics.csv`
-- `outputs/v3/rolling_metrics.json`
+1. 时序特征工程双引擎：
+- `feature_engine=pandas`（迁移前）
+- `feature_engine=sql`（OpenMLDB 风格窗口 SQL，本地可复现实现）
 
-2. 最终评估：
-- `outputs/v3/final/metrics.json`
-- `outputs/v3/final/predictions.csv`
+2. 新脚本：
+- `scripts/train_v4_migration_compare.py`
 
-3. 误差分析：
-- `outputs/v3/error_cases.csv`
-- `outputs/v3/error_summary.json`
+3. 关键输出：
+- `outputs/v4/feature_consistency.csv`
+- `outputs/v4/feature_consistency_summary.json`
+- `outputs/v4/compare_metrics.csv`
+- `outputs/v4/compare_summary.json`
+- `outputs/v4/pandas/final/metrics.json`
+- `outputs/v4/sql/final/metrics.json`
 
-4. 图表（SVG）：
-- `outputs/v3/charts/rolling_f1.svg`
-- `outputs/v3/charts/rolling_threshold.svg`
-- `outputs/v3/charts/error_distribution.svg`
+## 课程提交材料对应关系
+
+1. 代码包（可运行代码+注释+数据）：
+- 代码：`src/` + `scripts/` + `configs/` + `run_aurora.bat`
+- 数据：`data/raw/` + `data/processed/`
+
+2. 报告 8 个部分建议对照：
+- 问题定义：`docs/version_iterations.txt`（版本目标与任务定义）
+- 数据处理：`scripts/prepare_data.py` + `src/aurora_ml/data_pipeline.py`
+- 模型架构：`scripts/train_v3_robust.py`
+- 训练配置：`configs/default.yaml` + `docs/run_method_v0.1.txt`
+- 评估结果：`outputs/v3/*` 与 `outputs/v4/*`
+- 改进：`docs/build_process_v0.1.txt`（v0.3.x 到 v0.4 过程）
+- 比较：`outputs/v4/compare_metrics.csv`
+- 总结：`docs/grill_notes_v0.1.txt`（可补最终结论）
+
+3. 2 分钟答辩 PPT 关键素材：
+- 数据来源与类型：Tushare 股票日线 + 派生时序特征
+- 算法选择：MLP 主线 + rolling validation + threshold tuning
+- 迁移亮点：pandas 特征工程迁移到 SQL 风格流水线并做一致性对比
 
 ## 如何读结果
 
-1. `rolling_metrics.csv`：看每个 fold 的 `test_f1/test_roc_auc/best_threshold` 稳定性。
-2. `final/metrics.json`：看最终主指标（accuracy/f1/precision/recall/roc_auc）。
-3. `error_summary.json`：看误报与漏报结构，特别是近阈值错误占比。
-4. `error_cases.csv`：逐条定位错判日期与概率。
+1. `outputs/v3/rolling_metrics.csv`：跨时间窗稳定性（`test_f1/best_threshold`）
+2. `outputs/v3/final/metrics.json`：最终主指标（accuracy/f1/precision/recall/roc_auc）
+3. `outputs/v3/error_summary.json`：误报/漏报结构与 near-threshold 错误率
+4. `outputs/v4/compare_metrics.csv`：迁移前后指标差值（`sql_minus_pandas`）
 
 ## Validate
 
@@ -84,8 +102,6 @@ python -m pytest -q
 
 ## Docs
 
-详细过程与解释文档在 `docs/` 目录：
-
 1. `docs/version_iterations.txt`
 2. `docs/run_method_v0.1.txt`
 3. `docs/grill_notes_v0.1.txt`
@@ -94,8 +110,15 @@ python -m pytest -q
 ## Repo Layout
 
 1. `src/aurora_ml/`：核心实现（配置、数据、模型、训练、推理）
-2. `scripts/`：命令行入口（当前主入口是 `train_v3_robust.py`）
+2. `scripts/`：训练与对比入口（`train_v3_robust.py` / `train_v4_migration_compare.py`）
 3. `configs/default.yaml`：统一配置
-4. `data/`：原始/处理后数据
+4. `data/`：原始与处理后数据
 5. `outputs/`：训练输出（默认不提交）
 6. `tests/`：最小测试集
+
+## Git 提交前最小检查
+
+1. `run_aurora.bat v3` 成功，`outputs/v3/final/metrics.json` 更新
+2. `run_aurora.bat v4` 成功，`outputs/v4/compare_metrics.csv` 更新
+3. `python -m pytest -q` 通过
+4. `git status` 仅包含你计划提交的文件

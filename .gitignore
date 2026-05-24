@@ -22,12 +22,6 @@ data/raw/*
 data/processed/*
 !data/processed/.gitkeep
 
-# Local docs snapshots
-docs/grill_notes_v0.1.txt
-docs/build_process_v0.1.txt
-docs/run_method_v0.1.txt
-docs/version_iterations.txt
-
 # Local env
 .env*
 !.env.example
@@ -38,6 +32,7 @@ docs/version_iterations.txt
 
 # IDE
 .vscode/
+.docker-runtime/
 
 # OS
 Thumbs.db

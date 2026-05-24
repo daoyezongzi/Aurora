@@ -20,6 +20,8 @@ if /I "%MODE%"=="prepare" goto prepare
 if /I "%MODE%"=="prepare-refresh" goto prepare_refresh
 if /I "%MODE%"=="v3" goto v3
 if /I "%MODE%"=="v3-refresh" goto v3_refresh
+if /I "%MODE%"=="v4" goto v4
+if /I "%MODE%"=="v4-refresh" goto v4_refresh
 if /I "%MODE%"=="test" goto test
 goto usage
 
@@ -43,6 +45,16 @@ goto done
 if errorlevel 1 goto fail
 goto done
 
+:v4
+"%PYTHON%" scripts\train_v4_migration_compare.py --config "%CONFIG%"
+if errorlevel 1 goto fail
+goto done
+
+:v4_refresh
+"%PYTHON%" scripts\train_v4_migration_compare.py --config "%CONFIG%" --refresh
+if errorlevel 1 goto fail
+goto done
+
 :test
 "%PYTHON%" -m pytest -q
 if errorlevel 1 goto fail
@@ -57,6 +69,8 @@ echo   prepare         prepare data
 echo   prepare-refresh prepare data with --refresh
 echo   v3              rolling validation + threshold tuning + error analysis
 echo   v3-refresh      same as v3 with data refresh
+echo   v4              SQL feature migration compare (pandas vs sql)
+echo   v4-refresh      same as v4 with data refresh
 echo   test            run pytest
 exit /b 1
 
