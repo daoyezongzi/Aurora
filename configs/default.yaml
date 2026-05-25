@@ -1,6 +1,6 @@
 project:
   name: Aurora
-  version: v0.3
+  version: v1.0
   seed: 42
   device_policy: auto
 
@@ -46,7 +46,7 @@ train:
   loss: "BCEWithLogitsLoss"
 
 output:
-  model_path: "outputs/model.pt"
-  metrics_path: "outputs/metrics.json"
-  predictions_path: "outputs/predictions.csv"
-  scaler_path: "outputs/scaler.npz"
+  model_path: "outputs/v1/model.pt"
+  metrics_path: "outputs/v1/metrics.json"
+  predictions_path: "outputs/v1/predictions.csv"
+  scaler_path: "outputs/v1/scaler.npz"

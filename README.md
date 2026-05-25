@@ -1,124 +1,66 @@
-# Aurora
+﻿# Aurora (Py_finalwork)
 
-Aurora 当前交付主线是 **v0.4 时序特征工程迁移与对比**。  
-课程方向采用“方向1：自主选题（结构化时序二分类）”。
+Aurora 是一个课程机器学习项目，任务是基于股票日线数据做“次日涨跌二分类”预测。
 
-## Quick Start
+当前交付版本：`v1.0`（2026-05-24 冻结）
 
-1. 创建虚拟环境并安装依赖（推荐 Python 3.11+）：
+## 1. 快速开始
 
+### 1) 创建环境并安装依赖
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
 ```
 
-2. 配置 `.env`（首次拉数或刷新数据时需要）：
-
+### 2) 配置环境变量
+创建 `.env`，至少包含：
 ```env
-TUSHARE_TOKEN=your_token_here
+TUSHARE_TOKEN=your_tushare_token
 ```
 
-## One-Click (Windows BAT)
-
-默认执行 v0.3 稳态训练：
-
+### 3) 一键运行（Windows）
 ```powershell
-run_aurora.bat
+./run_aurora.bat v3
+./run_aurora.bat v4
+./run_aurora.bat test
 ```
 
-可选模式：
+## 2. 常用模式
+- `prepare`: 准备数据
+- `prepare-refresh`: 强制刷新数据
+- `v3`: 稳健训练主线（rolling + threshold + error analysis）
+- `v3-refresh`: 刷新数据后跑 v3
+- `v4`: pandas vs SQL 特征迁移对比
+- `v4-refresh`: 刷新数据后跑 v4
+- `test`: 运行测试
 
-```powershell
-run_aurora.bat prepare
-run_aurora.bat prepare-refresh
-run_aurora.bat v3
-run_aurora.bat v3-refresh
-run_aurora.bat v4
-run_aurora.bat v4-refresh
-run_aurora.bat test
-```
+## 3. 结果查看
+- v3 最终指标：`outputs/v3/final/metrics.json`
+- v3 错误分析：`outputs/v3/error_summary.json`
+- v4 迁移对比：`outputs/v4/compare_metrics.csv`
+- v4 一致性摘要：`outputs/v4/feature_consistency_summary.json`
 
-模式说明：
+## 4. 文档入口（v1.0）
+- 项目总览：`docs/v1_0_project_guide.md`
+- 开发记忆：`docs/v1_0_dev_memory.md`
+- 版本迭代：`docs/version_iterations.txt`
+- 课程报告草稿：`docs/v1_0_course_report.md`
+- PPT 思路：`docs/v1_0_ppt_outline.md`
+- 答辩问答：`docs/v1_0_teacher_qa.md`
+- TradeEye 对接方案：`docs/v1_0_tradeeye_integration.md`
 
-1. `prepare`：准备数据（优先本地冻结数据）
-2. `prepare-refresh`：强制从 Tushare 拉新数据
-3. `v3`：执行 v0.3 稳健流程（rolling + threshold + error analysis）
-4. `v3-refresh`：先刷新数据，再执行 v0.3
-5. `v4`：执行 v0.4 迁移对比（pandas vs sql）
-6. `v4-refresh`：先刷新数据，再执行 v0.4
-7. `test`：运行最小测试集
+## 5. 目录结构
+- `src/aurora_ml/`: 核心实现
+- `scripts/`: 训练/对比入口脚本
+- `configs/`: 配置
+- `data/`: 数据
+- `outputs/`: 各版本实验产物
+- `docs/`: 文档与答辩材料
 
-## v0.4 新增内容
-
-1. 时序特征工程双引擎：
-- `feature_engine=pandas`（迁移前）
-- `feature_engine=sql`（OpenMLDB 风格窗口 SQL，本地可复现实现）
-
-2. 新脚本：
-- `scripts/train_v4_migration_compare.py`
-
-3. 关键输出：
-- `outputs/v4/feature_consistency.csv`
-- `outputs/v4/feature_consistency_summary.json`
-- `outputs/v4/compare_metrics.csv`
-- `outputs/v4/compare_summary.json`
-- `outputs/v4/pandas/final/metrics.json`
-- `outputs/v4/sql/final/metrics.json`
-
-## 课程提交材料对应关系
-
-1. 代码包（可运行代码+注释+数据）：
-- 代码：`src/` + `scripts/` + `configs/` + `run_aurora.bat`
-- 数据：`data/raw/` + `data/processed/`
-
-2. 报告 8 个部分建议对照：
-- 问题定义：`docs/version_iterations.txt`（版本目标与任务定义）
-- 数据处理：`scripts/prepare_data.py` + `src/aurora_ml/data_pipeline.py`
-- 模型架构：`scripts/train_v3_robust.py`
-- 训练配置：`configs/default.yaml` + `docs/run_method_v0.1.txt`
-- 评估结果：`outputs/v3/*` 与 `outputs/v4/*`
-- 改进：`docs/build_process_v0.1.txt`（v0.3.x 到 v0.4 过程）
-- 比较：`outputs/v4/compare_metrics.csv`
-- 总结：`docs/grill_notes_v0.1.txt`（可补最终结论）
-
-3. 2 分钟答辩 PPT 关键素材：
-- 数据来源与类型：Tushare 股票日线 + 派生时序特征
-- 算法选择：MLP 主线 + rolling validation + threshold tuning
-- 迁移亮点：pandas 特征工程迁移到 SQL 风格流水线并做一致性对比
-
-## 如何读结果
-
-1. `outputs/v3/rolling_metrics.csv`：跨时间窗稳定性（`test_f1/best_threshold`）
-2. `outputs/v3/final/metrics.json`：最终主指标（accuracy/f1/precision/recall/roc_auc）
-3. `outputs/v3/error_summary.json`：误报/漏报结构与 near-threshold 错误率
-4. `outputs/v4/compare_metrics.csv`：迁移前后指标差值（`sql_minus_pandas`）
-
-## Validate
-
-```powershell
-python -m pytest -q
-```
-
-## Docs
-
-1. `docs/version_iterations.txt`
-2. `docs/run_method_v0.1.txt`
-3. `docs/grill_notes_v0.1.txt`
-4. `docs/build_process_v0.1.txt`
-
-## Repo Layout
-
-1. `src/aurora_ml/`：核心实现（配置、数据、模型、训练、推理）
-2. `scripts/`：训练与对比入口（`train_v3_robust.py` / `train_v4_migration_compare.py`）
-3. `configs/default.yaml`：统一配置
-4. `data/`：原始与处理后数据
-5. `outputs/`：训练输出（默认不提交）
-6. `tests/`：最小测试集
-
-## Git 提交前最小检查
-
-1. `run_aurora.bat v3` 成功，`outputs/v3/final/metrics.json` 更新
-2. `run_aurora.bat v4` 成功，`outputs/v4/compare_metrics.csv` 更新
-3. `python -m pytest -q` 通过
-4. `git status` 仅包含你计划提交的文件
+## 6. 版本说明
+- v0.1: 最小闭环
+- v0.2: 多模型对比
+- v0.3: 稳健性增强
+- v0.4: SQL 风格特征迁移对比
+- v1.0: 交付冻结（结构清理 + 文档闭环 + 对接方案）

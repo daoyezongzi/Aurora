@@ -17,7 +17,7 @@ from aurora_ml.data_pipeline import prepare_data
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Prepare raw and processed dataset for Aurora v0.3")
+    parser = argparse.ArgumentParser(description="Prepare raw and processed dataset for Aurora v1.0")
     parser.add_argument("--config", default="configs/default.yaml", help="Path to yaml config")
     parser.add_argument(
         "--refresh",

@@ -23,7 +23,7 @@ import train_v3_robust as v3
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train v0.4 migration compare: pandas features vs SQL time-series features."
+        description="Run migration compare: pandas features vs SQL time-series features."
     )
     parser.add_argument("--config", default="configs/default.yaml", help="Path to yaml config")
     parser.add_argument("--refresh", action="store_true", help="Refresh raw data from Tushare before compare")

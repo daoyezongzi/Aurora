@@ -81,7 +81,7 @@ class TuneOpts:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train v0.3 robust workflow: rolling + threshold + error analysis")
+    parser = argparse.ArgumentParser(description="Train Aurora robust workflow: rolling + threshold + error analysis")
     parser.add_argument("--config", default="configs/default.yaml", help="Path to yaml config")
     parser.add_argument("--refresh", action="store_true", help="Refresh raw data from Tushare before training")
     parser.add_argument(

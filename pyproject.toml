@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aurora-ml"
-version = "0.4.0"
-description = "Aurora v0.4 - robust workflow plus SQL-style time-series feature migration comparison."
+version = "1.0.0"
+description = "Aurora v1.0 - coursework-ready robust workflow with feature-migration comparison and documentation freeze."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
